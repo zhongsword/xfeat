@@ -9,6 +9,45 @@ import torch.nn as nn
 import torch.nn.functional as F
 import time
 
+class LearnableRotationEncoding(nn.Module):
+    def __init__(self, dim, M=2, gamma=1.0):
+        super().__init__()
+        self.dim = dim
+        # 可学习的线性层：将坐标映射到傅里叶空间
+        self.Wr = nn.Linear(M, dim // 2, bias=False)
+        nn.init.normal_(self.Wr.weight.data, mean=0, std=gamma**-2)
+        
+    def forward(self, x):
+        """
+        x: [B, C, H, W] 输入特征图
+        """
+        B, C, H, W = x.shape
+        
+        # 生成归一化坐标
+        x_coords = torch.linspace(-1, 1, W, device=x.device)
+        y_coords = torch.linspace(-1, 1, H, device=x.device)
+        x_grid, y_grid = torch.meshgrid(x_coords, y_coords, indexing='xy')
+        pos = torch.stack([x_grid, y_grid], dim=-1)  # [H, W, 2]
+        
+        # 应用可学习线性层并计算正弦/余弦
+        pos_flat = pos.reshape(-1, 2)  # [H*W, 2]
+        projected = self.Wr(pos_flat)  # [H*W, dim//2]
+        emb_flat = torch.cat([
+            torch.cos(projected),
+            torch.sin(projected)
+        ], dim=-1)  # [H*W, dim]
+        
+        # 重塑回特征图形状
+        emb = emb_flat.reshape(H, W, self.dim).permute(2, 0, 1).unsqueeze(0).expand(B, -1, -1, -1)
+        
+        # 注入特征
+        if emb.shape[1] == C:
+            x = x + emb
+        else:
+            x = x + emb[:, :C, :, :]
+            
+        return x
+
 class BasicLayer(nn.Module):
 	"""
 	  Basic Convolutional Layer: Conv2d -> BatchNorm -> ReLU
@@ -69,12 +108,16 @@ class XFeatModel(nn.Module):
 										BasicLayer(128, 128, stride=1),
 										BasicLayer(128,  64, 1, padding=0),
 									 )
-
+  
 		self.block_fusion =  nn.Sequential(
 										BasicLayer(64, 64, stride=1),
 										BasicLayer(64, 64, stride=1),
 										nn.Conv2d (64, 64, 1, padding=0)
 									 )
+  
+		self.posembedding = LearnableRotationEncoding(
+            dim=64, 
+        )
 
 		self.heatmap_head = nn.Sequential(
 										BasicLayer(64, 64, 1, padding=0),
@@ -138,6 +181,7 @@ class XFeatModel(nn.Module):
 		#main backbone
 		x1 = self.block1(x)
 		x2 = self.block2(x1 + self.skip1(x))
+		x2 = self.posembedding(x2)
 		x3 = self.block3(x2)
 		x4 = self.block4(x3)
 		x5 = self.block5(x4)
@@ -146,7 +190,7 @@ class XFeatModel(nn.Module):
 		x4 = F.interpolate(x4, (x3.shape[-2], x3.shape[-1]), mode='bilinear')
 		x5 = F.interpolate(x5, (x3.shape[-2], x3.shape[-1]), mode='bilinear')
 		feats = self.block_fusion( x3 + x4 + x5 )
-
+  
 		#heads
 		heatmap = self.heatmap_head(feats) # Reliability map
 		keypoints = self.keypoint_head(self._unfold2d(x, ws=8)) #Keypoint map logits
