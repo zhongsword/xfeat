@@ -10,36 +10,46 @@ import torch.nn.functional as F
 import time
 
 class LearnableRotationEncoding(nn.Module):
-    def __init__(self, dim, M=2, gamma=1.0):
+    def __init__(self, dim, M=2):
         super().__init__()
-        self.dim = dim
-        # 可学习的线性层：将坐标映射到傅里叶空间
-        self.Wr = nn.Linear(M, dim // 2, bias=False)
-        nn.init.normal_(self.Wr.weight.data, mean=0, std=gamma**-2)
+        self.M = M
+        self.up = nn.Sequential(
+            nn.Linear(M, dim//2, bias=False), 
+            nn.ReLU(inplace=True), 
+        )
+        self.down = nn.Sequential(
+			nn.Linear(16*dim, 24, bias=False), 
+		)
+         
+
         
     def forward(self, x):
         """
         x: [B, C, H, W] 输入特征图
         """
         B, C, H, W = x.shape
-        
-        # 生成归一化坐标
-        x_coords = torch.linspace(-1, 1, W, device=x.device)
-        y_coords = torch.linspace(-1, 1, H, device=x.device)
+        device = x.device
+        x_coords = torch.linspace(-1, 1, 4*W, device=device)
+        y_coords = torch.linspace(-1, 1, 4*H, device=device)
         x_grid, y_grid = torch.meshgrid(x_coords, y_coords, indexing='xy')
-        pos = torch.stack([x_grid, y_grid], dim=-1)  # [H, W, 2]
-        
-        # 应用可学习线性层并计算正弦/余弦
-        pos_flat = pos.reshape(-1, 2)  # [H*W, 2]
-        projected = self.Wr(pos_flat)  # [H*W, dim//2]
+        pos = torch.stack([x_grid, y_grid], dim=-1)  # [4H, 4W, M]
+        pos_flat = pos.reshape(-1, self.M)  # [4H*4W, M]
+		
+
+        # 投影到高维
+        projected = self.up(pos_flat)  # [H*W, dim//2]
         emb_flat = torch.cat([
             torch.cos(projected),
             torch.sin(projected)
         ], dim=-1)  # [H*W, dim]
+
         
         # 重塑回特征图形状
-        emb = emb_flat.reshape(H, W, self.dim).permute(2, 0, 1).unsqueeze(0).expand(B, -1, -1, -1)
-        
+        emb = emb_flat.reshape(H, W, -1)
+        emb = self.down(emb)  # [H, W, 24]
+        print(emb.shape)
+        emb = emb.permute(2, 0, 1).unsqueeze(0)  # [1, dim, H, W]
+        emb = emb.repeat(B, 1, 1, 1)  # [B, dim, H, W]
         # 注入特征
         if emb.shape[1] == C:
             x = x + emb
@@ -115,9 +125,7 @@ class XFeatModel(nn.Module):
 										nn.Conv2d (64, 64, 1, padding=0)
 									 )
   
-		self.posembedding = LearnableRotationEncoding(
-            dim=64, 
-        )
+		self.posembedding = LearnableRotationEncoding(dim=16, M=2)
 
 		self.heatmap_head = nn.Sequential(
 										BasicLayer(64, 64, 1, padding=0),
@@ -180,8 +188,8 @@ class XFeatModel(nn.Module):
 
 		#main backbone
 		x1 = self.block1(x)
+		x1 = self.posembedding(x1)
 		x2 = self.block2(x1 + self.skip1(x))
-		x2 = self.posembedding(x2)
 		x3 = self.block3(x2)
 		x4 = self.block4(x3)
 		x5 = self.block5(x4)

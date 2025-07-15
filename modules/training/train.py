@@ -146,6 +146,7 @@ class Trainer():
 
         p1s, p2s, H1, H2 = None, None, None, None
         d = None
+        loss_last = float('inf')
 
         if self.augmentor is not None:
             p1s, p2s, H1, H2 = make_batch(self.augmentor, difficulty)
@@ -270,8 +271,14 @@ class Trainer():
 
                 if (i+1) % self.save_ckpt_every == 0:
                     print('saving iter ', i+1)
-                    torch.save(self.net.state_dict(), self.ckpt_save_path + f'/{self.model_name}_{i+1}.pth')
-
+                    torch.save(self.net.state_dict(), self.ckpt_save_path + f'/{self.model_name}_last.pth')
+                
+                if loss.item() < loss_last:
+                    loss_last = loss.item()
+                    torch.save(self.net.state_dict(), self.ckpt_save_path + f'/{self.model_name}_best.pth')
+                else:
+                    loss_last = loss.item()
+                    
                 pbar.set_description( 'Loss: {:.4f} acc_c0 {:.3f} acc_c1 {:.3f} acc_f: {:.3f} loss_c: {:.3f} loss_f: {:.3f} loss_kp: {:.3f} #matches_c: {:d} loss_kp_pos: {:.3f} acc_kp_pos: {:.3f}'.format(
                                                                         loss.item(), acc_coarse_0, acc_coarse, acc_coords, loss_coarse, loss_coord, loss_l1, nb_coarse, loss_kp_pos, acc_pos) )
                 pbar.update(1)
