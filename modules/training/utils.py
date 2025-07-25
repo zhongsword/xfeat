@@ -194,7 +194,7 @@ def check_accuracy(X, Y, pts1 = None, pts2 = None, plot=False):
         return acc
 
 def get_nb_trainable_params(model):
-	model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-	nb_params = sum([np.prod(p.size()) for p in model_parameters])
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    nb_params = sum([np.prod(p.size()) for p in model_parameters])
  
-	print('Number of trainable parameters: {:d}'.format(nb_params))
+    print('Number of trainable parameters: {:d}'.format(nb_params))
