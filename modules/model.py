@@ -47,7 +47,6 @@ class LearnableRotationEncoding(nn.Module):
         # 重塑回特征图形状
         emb = emb_flat.reshape(H, W, -1)
         emb = self.down(emb)  # [H, W, 24]
-        print(emb.shape)
         emb = emb.permute(2, 0, 1).unsqueeze(0)  # [1, dim, H, W]
         emb = emb.repeat(B, 1, 1, 1)  # [B, dim, H, W]
         # 注入特征
